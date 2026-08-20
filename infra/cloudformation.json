@@ -1,0 +1,1219 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Nova Detailing V1 infrastructure: Amplify Next.js hosting, private S3 media storage, CloudFront gallery CDN, DynamoDB, Cognito admin auth, SES sender identity, and optional Amplify custom domain association.",
+  "Metadata": {
+    "AWS::CloudFormation::Interface": {
+      "ParameterGroups": [
+        {
+          "Label": {
+            "default": "Project"
+          },
+          "Parameters": [
+            "ProjectName",
+            "Environment"
+          ]
+        },
+        {
+          "Label": {
+            "default": "GitHub / Amplify"
+          },
+          "Parameters": [
+            "GitRepositoryUrl",
+            "GitHubAccessToken",
+            "GitBranch"
+          ]
+        },
+        {
+          "Label": {
+            "default": "Domain"
+          },
+          "Parameters": [
+            "DomainName"
+          ]
+        },
+        {
+          "Label": {
+            "default": "Business"
+          },
+          "Parameters": [
+            "BusinessPhone",
+            "NotificationEmail"
+          ]
+        },
+        {
+          "Label": {
+            "default": "Email"
+          },
+          "Parameters": [
+            "SesIdentity",
+            "SesFromAddress"
+          ]
+        },
+        {
+          "Label": {
+            "default": "Uploads"
+          },
+          "Parameters": [
+            "UploadCorsOrigins",
+            "QuotePhotoRetentionDays"
+          ]
+        }
+      ],
+      "ParameterLabels": {
+        "ProjectName": {
+          "default": "Project name"
+        },
+        "Environment": {
+          "default": "Environment"
+        },
+        "GitRepositoryUrl": {
+          "default": "GitHub repository URL"
+        },
+        "GitHubAccessToken": {
+          "default": "GitHub access token"
+        },
+        "GitBranch": {
+          "default": "Production branch"
+        },
+        "DomainName": {
+          "default": "Custom domain (optional)"
+        },
+        "BusinessPhone": {
+          "default": "Business phone (E.164)"
+        },
+        "NotificationEmail": {
+          "default": "Quote notification recipient (optional)"
+        },
+        "SesIdentity": {
+          "default": "SES identity to create/verify (optional)"
+        },
+        "SesFromAddress": {
+          "default": "SES From address (optional)"
+        },
+        "UploadCorsOrigins": {
+          "default": "Allowed browser upload origins"
+        },
+        "QuotePhotoRetentionDays": {
+          "default": "Quote-photo retention (days)"
+        }
+      }
+    }
+  },
+  "Parameters": {
+    "ProjectName": {
+      "Type": "String",
+      "Default": "nova-detailing",
+      "AllowedPattern": "^[a-z0-9-]+$",
+      "ConstraintDescription": "Use lowercase letters, numbers, and hyphens only."
+    },
+    "Environment": {
+      "Type": "String",
+      "Default": "prod",
+      "AllowedValues": [
+        "dev",
+        "staging",
+        "prod"
+      ]
+    },
+    "GitRepositoryUrl": {
+      "Type": "String",
+      "Description": "GitHub repository URL, e.g. https://github.com/your-org/nova-detailing"
+    },
+    "GitHubAccessToken": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 1,
+      "MaxLength": 255,
+      "Description": "GitHub access token used by Amplify to authorize repository access."
+    },
+    "GitBranch": {
+      "Type": "String",
+      "Default": "main"
+    },
+    "DomainName": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional apex domain already registered/hosted in Route 53, e.g. novadetailing.com. Leave blank until purchased."
+    },
+    "BusinessPhone": {
+      "Type": "String",
+      "Default": "+12137008395",
+      "AllowedPattern": "^\\+[1-9][0-9]{7,14}$",
+      "ConstraintDescription": "Use E.164 format, e.g. +12137008395."
+    },
+    "NotificationEmail": {
+      "Type": "String",
+      "Default": "novadetailing17@gmail.com",
+      "Description": "Address that receives new quote notifications. Leave blank until chosen."
+    },
+    "SesIdentity": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional SES email or domain identity to create/verify, e.g. quotes@novadetailing.com or novadetailing.com."
+    },
+    "SesFromAddress": {
+      "Type": "String",
+      "Default": "",
+      "Description": "From address used by the app when sending mail, e.g. quotes@novadetailing.com."
+    },
+    "UploadCorsOrigins": {
+      "Type": "CommaDelimitedList",
+      "Default": "*",
+      "Description": "Origins allowed to use presigned browser uploads. Replace * with the production and dev site origins before launch."
+    },
+    "QuotePhotoRetentionDays": {
+      "Type": "Number",
+      "Default": 90,
+      "MinValue": 1,
+      "MaxValue": 3650
+    }
+  },
+  "Conditions": {
+    "HasCustomDomain": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "DomainName"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasSesIdentity": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "SesIdentity"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "MediaBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "CorsConfiguration": {
+          "CorsRules": [
+            {
+              "AllowedHeaders": [
+                "*"
+              ],
+              "AllowedMethods": [
+                "GET",
+                "PUT",
+                "POST",
+                "HEAD"
+              ],
+              "AllowedOrigins": {
+                "Ref": "UploadCorsOrigins"
+              },
+              "ExposedHeaders": [
+                "ETag"
+              ],
+              "MaxAge": 3000
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ExpireCustomerQuotePhotos",
+              "Status": "Enabled",
+              "Prefix": "quotes/",
+              "ExpirationInDays": {
+                "Ref": "QuotePhotoRetentionDays"
+              },
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": {
+                  "Ref": "QuotePhotoRetentionDays"
+                }
+              },
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+              }
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "MediaOriginAccessControl": {
+      "Type": "AWS::CloudFront::OriginAccessControl",
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Description": "OAC for Nova Detailing gallery media",
+          "Name": {
+            "Fn::Sub": "${ProjectName}-${Environment}-gallery-oac"
+          },
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      }
+    },
+    "MediaCachePolicy": {
+      "Type": "AWS::CloudFront::CachePolicy",
+      "Properties": {
+        "CachePolicyConfig": {
+          "Comment": "Long-lived cache for immutable gallery assets",
+          "DefaultTTL": 86400,
+          "MaxTTL": 31536000,
+          "MinTTL": 0,
+          "Name": {
+            "Fn::Sub": "${ProjectName}-${Environment}-gallery-cache"
+          },
+          "ParametersInCacheKeyAndForwardedToOrigin": {
+            "CookiesConfig": {
+              "CookieBehavior": "none"
+            },
+            "EnableAcceptEncodingBrotli": true,
+            "EnableAcceptEncodingGzip": true,
+            "HeadersConfig": {
+              "HeaderBehavior": "none"
+            },
+            "QueryStringsConfig": {
+              "QueryStringBehavior": "none"
+            }
+          }
+        }
+      }
+    },
+    "MediaDistribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Comment": {
+            "Fn::Sub": "${ProjectName}-${Environment} gallery CDN"
+          },
+          "Enabled": true,
+          "HttpVersion": "http2and3",
+          "IPV6Enabled": true,
+          "PriceClass": "PriceClass_100",
+          "Origins": [
+            {
+              "Id": "MediaS3Origin",
+              "DomainName": {
+                "Fn::GetAtt": [
+                  "MediaBucket",
+                  "RegionalDomainName"
+                ]
+              },
+              "OriginPath": "/gallery",
+              "OriginAccessControlId": {
+                "Fn::GetAtt": [
+                  "MediaOriginAccessControl",
+                  "Id"
+                ]
+              },
+              "S3OriginConfig": {
+                "OriginAccessIdentity": ""
+              }
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "AllowedMethods": [
+              "GET",
+              "HEAD",
+              "OPTIONS"
+            ],
+            "CachedMethods": [
+              "GET",
+              "HEAD",
+              "OPTIONS"
+            ],
+            "CachePolicyId": {
+              "Ref": "MediaCachePolicy"
+            },
+            "Compress": true,
+            "TargetOriginId": "MediaS3Origin",
+            "ViewerProtocolPolicy": "redirect-to-https"
+          },
+          "ViewerCertificate": {
+            "CloudFrontDefaultCertificate": true
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "MediaBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "DependsOn": [
+        "MediaDistribution"
+      ],
+      "Properties": {
+        "Bucket": {
+          "Ref": "MediaBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AllowCloudFrontReadGalleryOnly",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com"
+              },
+              "Action": "s3:GetObject",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::GetAtt": [
+                        "MediaBucket",
+                        "Arn"
+                      ]
+                    },
+                    "/gallery/*"
+                  ]
+                ]
+              },
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${MediaDistribution}"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "MediaBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "MediaBucket",
+                          "Arn"
+                        ]
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "InquiriesTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "TableName": {
+          "Fn::Sub": "${ProjectName}-${Environment}-inquiries"
+        },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "id",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "status",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "createdAt",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "id",
+            "KeyType": "HASH"
+          }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "status-createdAt-index",
+            "KeySchema": [
+              {
+                "AttributeName": "status",
+                "KeyType": "HASH"
+              },
+              {
+                "AttributeName": "createdAt",
+                "KeyType": "RANGE"
+              }
+            ],
+            "Projection": {
+              "ProjectionType": "ALL"
+            }
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "GalleryTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "TableName": {
+          "Fn::Sub": "${ProjectName}-${Environment}-gallery"
+        },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "id",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "id",
+            "KeyType": "HASH"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "ReviewsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "TableName": {
+          "Fn::Sub": "${ProjectName}-${Environment}-reviews"
+        },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "id",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "id",
+            "KeyType": "HASH"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "AdminUserPool": {
+      "Type": "AWS::Cognito::UserPool",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "UserPoolName": {
+          "Fn::Sub": "${ProjectName}-${Environment}-admins"
+        },
+        "UsernameAttributes": [
+          "email"
+        ],
+        "AutoVerifiedAttributes": [
+          "email"
+        ],
+        "AdminCreateUserConfig": {
+          "AllowAdminCreateUserOnly": true
+        },
+        "MfaConfiguration": "ON",
+        "SoftwareTokenMfaConfiguration": {
+          "Enabled": true
+        },
+        "AccountRecoverySetting": {
+          "RecoveryMechanisms": [
+            {
+              "Name": "verified_email",
+              "Priority": 1
+            }
+          ]
+        },
+        "Policies": {
+          "PasswordPolicy": {
+            "MinimumLength": 12,
+            "RequireLowercase": true,
+            "RequireNumbers": true,
+            "RequireSymbols": true,
+            "RequireUppercase": true,
+            "TemporaryPasswordValidityDays": 7
+          }
+        },
+        "UserPoolTags": {
+          "Project": {
+            "Ref": "ProjectName"
+          },
+          "Environment": {
+            "Ref": "Environment"
+          }
+        }
+      }
+    },
+    "AdminUserPoolClient": {
+      "Type": "AWS::Cognito::UserPoolClient",
+      "Properties": {
+        "ClientName": {
+          "Fn::Sub": "${ProjectName}-${Environment}-web"
+        },
+        "UserPoolId": {
+          "Ref": "AdminUserPool"
+        },
+        "GenerateSecret": false,
+        "EnableTokenRevocation": true,
+        "PreventUserExistenceErrors": "ENABLED",
+        "ExplicitAuthFlows": [
+          "ALLOW_USER_SRP_AUTH",
+          "ALLOW_USER_PASSWORD_AUTH",
+          "ALLOW_REFRESH_TOKEN_AUTH"
+        ],
+        "AccessTokenValidity": 1,
+        "IdTokenValidity": 1,
+        "RefreshTokenValidity": 30,
+        "TokenValidityUnits": {
+          "AccessToken": "hours",
+          "IdToken": "hours",
+          "RefreshToken": "days"
+        }
+      }
+    },
+    "SesEmailIdentity": {
+      "Type": "AWS::SES::EmailIdentity",
+      "Condition": "HasSesIdentity",
+      "Properties": {
+        "EmailIdentity": {
+          "Ref": "SesIdentity"
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "AmplifySsrComputeRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "amplify.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "NovaApplicationDataAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "DynamoDbApplicationData",
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                    "dynamodb:Scan",
+                    "dynamodb:BatchGetItem",
+                    "dynamodb:BatchWriteItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "InquiriesTable",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          {
+                            "Fn::GetAtt": [
+                              "InquiriesTable",
+                              "Arn"
+                            ]
+                          },
+                          "/index/*"
+                        ]
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "GalleryTable",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "ReviewsTable",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Sid": "ListMediaPrefixes",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "MediaBucket",
+                        "Arn"
+                      ]
+                    }
+                  ],
+                  "Condition": {
+                    "StringLike": {
+                      "s3:prefix": [
+                        "gallery/*",
+                        "quotes/*"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Sid": "ManageMediaObjects",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          {
+                            "Fn::GetAtt": [
+                              "MediaBucket",
+                              "Arn"
+                            ]
+                          },
+                          "/gallery/*"
+                        ]
+                      ]
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          {
+                            "Fn::GetAtt": [
+                              "MediaBucket",
+                              "Arn"
+                            ]
+                          },
+                          "/quotes/*"
+                        ]
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Sid": "SendApplicationEmail",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:SendEmail",
+                    "ses:SendRawEmail"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "ses:FromAddress": {
+                        "Ref": "SesFromAddress"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "AmplifyServiceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "amplify.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "AmplifySsrCloudWatchLogs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/amplify/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "logs:DescribeLogGroups",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "AmplifyApp": {
+      "Type": "AWS::Amplify::App",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${ProjectName}-${Environment}"
+        },
+        "Description": "Nova Detailing Next.js application",
+        "Repository": {
+          "Ref": "GitRepositoryUrl"
+        },
+        "AccessToken": {
+          "Ref": "GitHubAccessToken"
+        },
+        "Platform": "WEB_COMPUTE",
+        "IAMServiceRole": {
+          "Fn::GetAtt": [
+            "AmplifyServiceRole",
+            "Arn"
+          ]
+        },
+        "EnableBranchAutoDeletion": true,
+        "BuildSpec": "version: 1\nfrontend:\n  phases:\n    preBuild:\n      commands:\n        - nvm use 22\n        - npm ci\n    build:\n      commands:\n        - env | grep -E '^(NEXT_PUBLIC_|INQUIRIES_TABLE=|GALLERY_TABLE=|REVIEWS_TABLE=|MEDIA_BUCKET=|NOTIFICATION_EMAIL=|SES_FROM_ADDRESS=)' >> .env.production\n        - npm run build\n  artifacts:\n    baseDirectory: .next\n    files:\n      - '**/*'\n  cache:\n    paths:\n      - node_modules/**/*\n",
+        "EnvironmentVariables": [
+          {
+            "Name": "INQUIRIES_TABLE",
+            "Value": {
+              "Ref": "InquiriesTable"
+            }
+          },
+          {
+            "Name": "GALLERY_TABLE",
+            "Value": {
+              "Ref": "GalleryTable"
+            }
+          },
+          {
+            "Name": "REVIEWS_TABLE",
+            "Value": {
+              "Ref": "ReviewsTable"
+            }
+          },
+          {
+            "Name": "MEDIA_BUCKET",
+            "Value": {
+              "Ref": "MediaBucket"
+            }
+          },
+          {
+            "Name": "NEXT_PUBLIC_MEDIA_CDN_URL",
+            "Value": {
+              "Fn::Sub": "https://${MediaDistribution.DomainName}"
+            }
+          },
+          {
+            "Name": "NEXT_PUBLIC_COGNITO_USER_POOL_ID",
+            "Value": {
+              "Ref": "AdminUserPool"
+            }
+          },
+          {
+            "Name": "NEXT_PUBLIC_COGNITO_CLIENT_ID",
+            "Value": {
+              "Ref": "AdminUserPoolClient"
+            }
+          },
+          {
+            "Name": "NEXT_PUBLIC_BUSINESS_PHONE",
+            "Value": {
+              "Ref": "BusinessPhone"
+            }
+          },
+          {
+            "Name": "NEXT_PUBLIC_SITE_URL",
+            "Value": {
+              "Fn::If": [
+                "HasCustomDomain",
+                {
+                  "Fn::Sub": "https://${DomainName}"
+                },
+                ""
+              ]
+            }
+          },
+          {
+            "Name": "NOTIFICATION_EMAIL",
+            "Value": {
+              "Ref": "NotificationEmail"
+            }
+          },
+          {
+            "Name": "SES_FROM_ADDRESS",
+            "Value": {
+              "Ref": "SesFromAddress"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "ProjectName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "ProductionBranch": {
+      "Type": "AWS::Amplify::Branch",
+      "Properties": {
+        "AppId": {
+          "Fn::GetAtt": [
+            "AmplifyApp",
+            "AppId"
+          ]
+        },
+        "BranchName": {
+          "Ref": "GitBranch"
+        },
+        "Description": "Production branch",
+        "EnableAutoBuild": true,
+        "EnablePerformanceMode": false,
+        "EnablePullRequestPreview": false,
+        "EnableSkewProtection": true,
+        "Stage": "PRODUCTION",
+        "ComputeRoleArn": {
+          "Fn::GetAtt": [
+            "AmplifySsrComputeRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "AmplifyDomain": {
+      "Type": "AWS::Amplify::Domain",
+      "Condition": "HasCustomDomain",
+      "DependsOn": [
+        "ProductionBranch"
+      ],
+      "Properties": {
+        "AppId": {
+          "Fn::GetAtt": [
+            "AmplifyApp",
+            "AppId"
+          ]
+        },
+        "DomainName": {
+          "Ref": "DomainName"
+        },
+        "EnableAutoSubDomain": false,
+        "SubDomainSettings": [
+          {
+            "BranchName": {
+              "Ref": "GitBranch"
+            },
+            "Prefix": ""
+          },
+          {
+            "BranchName": {
+              "Ref": "GitBranch"
+            },
+            "Prefix": "www"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "AmplifyAppId": {
+      "Description": "Amplify app ID",
+      "Value": {
+        "Fn::GetAtt": [
+          "AmplifyApp",
+          "AppId"
+        ]
+      }
+    },
+    "AmplifyDefaultDomain": {
+      "Description": "Amplify default domain",
+      "Value": {
+        "Fn::GetAtt": [
+          "AmplifyApp",
+          "DefaultDomain"
+        ]
+      }
+    },
+    "ProductionUrl": {
+      "Description": "Primary application URL",
+      "Value": {
+        "Fn::If": [
+          "HasCustomDomain",
+          {
+            "Fn::Sub": "https://${DomainName}"
+          },
+          {
+            "Fn::Sub": "https://${GitBranch}.${AmplifyApp.DefaultDomain}"
+          }
+        ]
+      }
+    },
+    "MediaBucketName": {
+      "Description": "Private S3 bucket containing gallery/ and quotes/ prefixes",
+      "Value": {
+        "Ref": "MediaBucket"
+      }
+    },
+    "GalleryCdnUrl": {
+      "Description": "Public gallery CDN base URL. CloudFront maps this root to s3://bucket/gallery/.",
+      "Value": {
+        "Fn::Sub": "https://${MediaDistribution.DomainName}"
+      }
+    },
+    "InquiriesTableName": {
+      "Value": {
+        "Ref": "InquiriesTable"
+      }
+    },
+    "GalleryTableName": {
+      "Value": {
+        "Ref": "GalleryTable"
+      }
+    },
+    "ReviewsTableName": {
+      "Value": {
+        "Ref": "ReviewsTable"
+      }
+    },
+    "CognitoUserPoolId": {
+      "Value": {
+        "Ref": "AdminUserPool"
+      }
+    },
+    "CognitoUserPoolClientId": {
+      "Value": {
+        "Ref": "AdminUserPoolClient"
+      }
+    },
+    "AmplifySsrComputeRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "AmplifySsrComputeRole",
+          "Arn"
+        ]
+      }
+    },
+    "CustomDomainStatus": {
+      "Condition": "HasCustomDomain",
+      "Value": {
+        "Fn::GetAtt": [
+          "AmplifyDomain",
+          "DomainStatus"
+        ]
+      }
+    },
+    "SesIdentityArn": {
+      "Condition": "HasSesIdentity",
+      "Value": {
+        "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SesIdentity}"
+      }
+    }
+  }
+}
